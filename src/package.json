@@ -1,0 +1,39 @@
+{
+  "name": "web3crit-scanner",
+  "version": "1.0.0",
+  "description": "Professional-grade smart contract vulnerability scanner for high-value Solidity contracts",
+  "main": "src/index.js",
+  "bin": {
+    "web3crit": "./src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/cli.js",
+    "scan": "node src/cli.js scan"
+  },
+  "keywords": [
+    "web3",
+    "security",
+    "smart-contract",
+    "vulnerability",
+    "scanner",
+    "solidity",
+    "audit"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@solidity-parser/parser": "^0.18.0",
+    "chalk": "^4.1.2",
+    "commander": "^11.1.0",
+    "web3": "^4.3.0",
+    "ora": "^5.4.1",
+    "boxen": "^5.1.2",
+    "cli-table3": "^0.6.3",
+    "figures": "^3.2.0",
+    "gradient-string": "^2.0.2",
+    "ethers": "^6.9.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.56.0"
+  }
+}

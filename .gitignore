@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.tgz
+
+# Environment variables (IMPORTANT: Never commit secrets)
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+secrets/
+credentials/
+
+# Build outputs
+dist/
+build/
+coverage/
+.nyc_output/
+
+# Scan results (don't commit test outputs)
+*_results.json
+results.json
+*.report.json
+reports/
+audit-*.md
+
+# IDE and OS files
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+Thumbs.db
+
+# Temporary files
+*.tmp
+temp/
+.cache/
+
+# Logs
+*.log
+logs/
+
+# Keep package-lock.json for production stability
+# yarn.lock
