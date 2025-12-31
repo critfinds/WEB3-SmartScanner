@@ -9,11 +9,11 @@ const gradient = require('gradient-string');
 const figures = require('figures');
 const fs = require('fs').promises;
 const path = require('path');
-const Web3CRITScanner = require('./scanner');
+const Web3CRITScanner = require('./scanner-enhanced');
 
 const program = new Command();
 
-// ASCII Art Banner
+// WEB3CRIT Banner
 function displayBanner() {
   const banner = `
  ██╗    ██╗███████╗██████╗ ██████╗  ██████╗██████╗ ██╗████████╗
@@ -25,8 +25,8 @@ function displayBanner() {
   `;
 
   console.log(gradient.pastel.multiline(banner));
-  console.log(chalk.gray('           Professional Smart Contract Security Scanner'));
-  console.log(chalk.gray('           Version 3.0.0 - Production-Grade for High-Value Contracts\n'));
+  console.log(chalk.gray('Enhanced Smart Contract Security Scanner'));
+  console.log(chalk.gray('Version 4.0.0 - Logic Analysis with CFG & Data Flow\n'));
 }
 
 // Severity color mapping
@@ -67,7 +67,7 @@ ${chalk.gray(figures.info)} Info:      ${stats.info}
   }));
 
   if (findings.length === 0) {
-    console.log(chalk.green.bold('\n✓ No vulnerabilities found!\n'));
+    console.log(chalk.green.bold('\nNo vulnerabilities found!\n'));
     return;
   }
 
@@ -125,7 +125,7 @@ async function saveResults(results, outputPath, format) {
     }
 
     await fs.writeFile(outputPath, content, 'utf8');
-    console.log(chalk.green(`\n✓ Report saved to: ${outputPath}\n`));
+    console.log(chalk.green(`\nReport saved to: ${outputPath}\n`));
   } catch (error) {
     console.error(chalk.red(`Error saving report: ${error.message}`));
   }
@@ -228,7 +228,7 @@ function generateTextReport(results) {
 program
   .name('web3crit')
   .description('Production-grade smart contract vulnerability scanner for high-value DeFi protocols')
-  .version('3.0.0');
+  .version('1.0.0');
 
 program
   .command('scan')
@@ -326,7 +326,7 @@ program
       const highCount = scanResults.stats.high;
       const totalCount = scanResults.stats.totalFindings;
 
-      let successMsg = chalk.green.bold('✓ Scan completed! ');
+      let successMsg = chalk.green.bold('Scan completed! ');
       if (criticalCount > 0) {
         successMsg += chalk.red.bold(`Found ${totalCount} issues (${criticalCount} CRITICAL) `) + chalk.gray(`in ${duration}s`);
       } else if (highCount > 0) {

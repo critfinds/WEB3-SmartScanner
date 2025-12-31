@@ -1,49 +1,35 @@
 # Dependencies
 node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-*.tgz
+package-lock.json
 
-# Environment variables (IMPORTANT: Never commit secrets)
-.env
-.env.local
-.env.*.local
-*.key
-*.pem
-secrets/
-credentials/
+# Test files
+test-contracts/
+multi-contract-results.json
+scan_results.json
+automated_audit_results.json
+automated_audit_resultsv2.json
+verification_results.md
+vulns.json
 
-# Build outputs
-dist/
-build/
-coverage/
-.nyc_output/
-
-# Scan results (don't commit test outputs)
-*_results.json
-results.json
-*.report.json
-reports/
-audit-*.md
-
-# IDE and OS files
+# OS files
 .DS_Store
+Thumbs.db
+
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
-Thumbs.db
-
-# Temporary files
-*.tmp
-temp/
-.cache/
 
 # Logs
 *.log
-logs/
+npm-debug.log*
 
-# Keep package-lock.json for production stability
-# yarn.lock
+# Output files (keep package.json)
+report.json
+results.json
+*-results.json
+
+# Temporary files
+*.tmp
+*.temp

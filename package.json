@@ -1,0 +1,46 @@
+{
+  "name": "web3crit-scanner",
+  "version": "4.0.0",
+  "description": "Enhanced smart contract vulnerability scanner with control flow and data flow analysis",
+  "main": "src/scanner-enhanced.js",
+  "bin": {
+    "web3crit": "./bin/web3crit"
+  },
+  "scripts": {
+    "test": "node test/test.js",
+    "install-global": "npm install -g .",
+    "scan": "node src/cli.js scan"
+  },
+  "keywords": [
+    "solidity",
+    "security",
+    "audit",
+    "vulnerability",
+    "smart-contract",
+    "ethereum",
+    "defi",
+    "reentrancy",
+    "access-control",
+    "static-analysis"
+  ],
+  "author": "Web3CRIT Team",
+  "license": "MIT",
+  "dependencies": {
+    "@solidity-parser/parser": "^0.14.5",
+    "commander": "^9.4.1",
+    "chalk": "^4.1.2",
+    "ora": "^5.4.1",
+    "boxen": "^5.1.2",
+    "cli-table3": "^0.6.3",
+    "gradient-string": "^2.0.2",
+    "figures": "^3.2.0"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/web3crit/scanner"
+  }
+}

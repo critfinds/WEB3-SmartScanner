@@ -2,77 +2,43 @@ const parser = require('@solidity-parser/parser');
 const fs = require('fs').promises;
 const path = require('path');
 
-// Import all detectors
-const ReentrancyDetector = require('./detectors/reentrancy');
-const IntegerOverflowDetector = require('./detectors/integer-overflow');
-const AccessControlDetector = require('./detectors/access-control');
+// Import enhanced analyzers
+const ControlFlowAnalyzer = require('./analyzers/control-flow');
+const DataFlowAnalyzer = require('./analyzers/data-flow');
+
+// Import enhanced detectors only
+const ReentrancyEnhancedDetector = require('./detectors/reentrancy-enhanced');
+const AccessControlEnhancedDetector = require('./detectors/access-control-enhanced');
+
+// Keep critical detectors that don't need enhancement
 const UncheckedCallDetector = require('./detectors/unchecked-call');
 const DelegateCallDetector = require('./detectors/delegatecall');
-const FrontRunningDetector = require('./detectors/frontrunning');
-const TimestampDependenceDetector = require('./detectors/timestamp');
-const LogicBugDetector = require('./detectors/logic-bugs');
 const UnprotectedSelfdestruct = require('./detectors/selfdestruct');
-const PriceFeedManipulation = require('./detectors/price-feed');
 
-// Advanced detectors (Slither-like capabilities)
-const ShadowingDetector = require('./detectors/shadowing');
-const TxOriginDetector = require('./detectors/tx-origin');
-const UninitializedStorageDetector = require('./detectors/uninitialized-storage');
-const MissingEventsDetector = require('./detectors/missing-events');
-const AssemblyUsageDetector = require('./detectors/assembly-usage');
-const DeadCodeDetector = require('./detectors/dead-code');
-const StateMutabilityDetector = require('./detectors/state-mutability');
-const InheritanceOrderDetector = require('./detectors/inheritance-order');
-const TaintAnalysisDetector = require('./detectors/taint-analysis');
-
-// Production-grade detectors (for high-value contracts)
-const FlashLoanAttackDetector = require('./detectors/flashloan-attacks');
-const SignatureReplayDetector = require('./detectors/signature-replay');
-const PrecisionLossDetector = require('./detectors/precision-loss');
-const GasGriefingDetector = require('./detectors/gas-griefing');
-
-class Web3CRITScanner {
+/**
+ * Enhanced Web3CRIT Scanner
+ * Uses control flow and data flow analysis instead of pattern matching
+ */
+class Web3CRITScannerEnhanced {
   constructor(options = {}) {
     this.options = {
       verbose: options.verbose || false,
-      severity: options.severity || 'all', // all, critical, high, medium, low
-      outputFormat: options.outputFormat || 'table', // table, json, detailed
-      onProgress: options.onProgress || null, // Progress callback
+      severity: options.severity || 'all',
+      outputFormat: options.outputFormat || 'json',
+      onProgress: options.onProgress || null,
       ...options
     };
 
-    // Initialize all detectors
+    // Initialize enhanced detectors
     this.detectors = [
-      // CRITICAL: Production-grade detectors for high-value contracts
-      new FlashLoanAttackDetector(),
-      new SignatureReplayDetector(),
-      new ReentrancyDetector(),
-      new TaintAnalysisDetector(),
-      new UninitializedStorageDetector(),
-      new AccessControlDetector(),
-      new DelegateCallDetector(),
-      new UnprotectedSelfdestruct(),
-      new PriceFeedManipulation(),
+      // Enhanced detectors with CFG/dataflow analysis
+      new ReentrancyEnhancedDetector(),
+      new AccessControlEnhancedDetector(),
 
-      // HIGH: Advanced vulnerability detection
-      new PrecisionLossDetector(),
-      new GasGriefingDetector(),
-      new IntegerOverflowDetector(),
+      // Keep simple detectors for operations that don't need deep analysis
       new UncheckedCallDetector(),
-      new FrontRunningDetector(),
-      new TxOriginDetector(),
-      new ShadowingDetector(),
-      new LogicBugDetector(),
-
-      // MEDIUM: Code quality and security best practices
-      new TimestampDependenceDetector(),
-      new AssemblyUsageDetector(),
-      new InheritanceOrderDetector(),
-
-      // LOW/INFO: Optimization and maintainability
-      new MissingEventsDetector(),
-      new DeadCodeDetector(),
-      new StateMutabilityDetector()
+      new DelegateCallDetector(),
+      new UnprotectedSelfdestruct()
     ];
 
     this.findings = [];
@@ -83,7 +49,8 @@ class Web3CRITScanner {
       high: 0,
       medium: 0,
       low: 0,
-      info: 0
+      info: 0,
+      exploitable: 0
     };
   }
 
@@ -119,13 +86,42 @@ class Web3CRITScanner {
       throw new Error(`Failed to parse Solidity code: ${error.message}`);
     }
 
-    // Small delay to show parsing step
-    await this.sleep(300);
+    await this.sleep(200);
+
+    // Progress: Building control flow graph
+    if (this.options.onProgress) {
+      this.options.onProgress({
+        stage: 'analyzing',
+        message: 'Building control flow graph...',
+        fileName
+      });
+    }
+
+    // Build control flow graph
+    const cfgAnalyzer = new ControlFlowAnalyzer();
+    const cfg = cfgAnalyzer.analyze(ast, sourceCode);
+
+    await this.sleep(200);
+
+    // Progress: Data flow analysis
+    if (this.options.onProgress) {
+      this.options.onProgress({
+        stage: 'analyzing',
+        message: 'Performing data flow analysis...',
+        fileName
+      });
+    }
+
+    // Perform data flow analysis
+    const dataFlowAnalyzer = new DataFlowAnalyzer(cfg);
+    const dataFlow = dataFlowAnalyzer.analyze();
+
+    await this.sleep(200);
 
     const contractFindings = [];
     const totalDetectors = this.detectors.length;
 
-    // Run all detectors with progress
+    // Run enhanced detectors with CFG and data flow info
     for (let i = 0; i < this.detectors.length; i++) {
       const detector = this.detectors[i];
 
@@ -142,12 +138,11 @@ class Web3CRITScanner {
       }
 
       try {
-        const detectorFindings = await detector.detect(ast, sourceCode, fileName);
+        // Pass CFG and data flow to enhanced detectors
+        const detectorFindings = await detector.detect(ast, sourceCode, fileName, cfg, dataFlow);
         contractFindings.push(...detectorFindings);
 
-        // Delay to make progress visible (slower for critical detectors)
-        const delay = detector.severity === 'CRITICAL' ? 150 : 80;
-        await this.sleep(delay);
+        await this.sleep(150);
       } catch (error) {
         if (this.options.verbose) {
           console.error(`Detector ${detector.name} failed: ${error.message}`);
@@ -159,15 +154,15 @@ class Web3CRITScanner {
     if (this.options.onProgress) {
       this.options.onProgress({
         stage: 'analyzing',
-        message: 'Analyzing findings...',
+        message: 'Filtering exploitable issues...',
         fileName
       });
     }
 
-    await this.sleep(300);
+    await this.sleep(200);
 
-    // Filter by severity if specified
-    const filteredFindings = this.filterBySeverity(contractFindings);
+    // Filter by severity and exploitability
+    const filteredFindings = this.filterFindings(contractFindings);
 
     // Update statistics
     this.updateStats(filteredFindings);
@@ -244,6 +239,37 @@ class Web3CRITScanner {
     return files;
   }
 
+  /**
+   * Filter findings by severity and exploitability
+   * Only report issues that are realistically exploitable
+   */
+  filterFindings(findings) {
+    // Filter by severity level
+    let filtered = this.filterBySeverity(findings);
+
+    // Only report exploitable issues (or high confidence non-exploitable warnings)
+    filtered = filtered.filter(finding => {
+      // Always report CRITICAL and HIGH severity with exploitable flag
+      if (finding.exploitable === true) {
+        return true;
+      }
+
+      // Report high confidence findings even if not marked exploitable
+      if (finding.confidence === 'HIGH' && finding.severity === 'CRITICAL') {
+        return true;
+      }
+
+      // Filter out low confidence, non-exploitable findings
+      if (finding.confidence === 'LOW' && finding.exploitable === false) {
+        return false;
+      }
+
+      return true;
+    });
+
+    return filtered;
+  }
+
   filterBySeverity(findings) {
     if (this.options.severity === 'all') {
       return findings;
@@ -271,13 +297,27 @@ class Web3CRITScanner {
       if (this.stats[severity] !== undefined) {
         this.stats[severity]++;
       }
+      if (finding.exploitable === true) {
+        this.stats.exploitable++;
+      }
     });
   }
 
   getFindings() {
     return {
       findings: this.findings,
-      stats: this.stats
+      stats: this.stats,
+      analysis: {
+        engine: 'enhanced',
+        version: '4.0.0',
+        features: [
+          'Control Flow Analysis',
+          'Data Flow Analysis',
+          'Cross-Function Reentrancy Detection',
+          'Modifier Logic Validation',
+          'Exploitability Verification'
+        ]
+      }
     };
   }
 
@@ -290,9 +330,10 @@ class Web3CRITScanner {
       high: 0,
       medium: 0,
       low: 0,
-      info: 0
+      info: 0,
+      exploitable: 0
     };
   }
 }
 
-module.exports = Web3CRITScanner;
+module.exports = Web3CRITScannerEnhanced;

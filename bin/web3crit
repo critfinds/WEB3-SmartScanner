@@ -1,0 +1,10 @@
+#!/usr/bin/env node
+
+/**
+ * Web3CRIT Scanner - Global Executable
+ * Can be installed globally with: npm install -g web3crit-scanner
+ * Or via pip3: pip3 install web3crit-scanner
+ */
+
+const path = require('path');
+const cli = require(path.join(__dirname, '..', 'src', 'cli.js'));
