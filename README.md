@@ -1,7 +1,7 @@
-# WEB3CRIT Scanner
+# Web3CRIT-Scanner
 
 <p align="center">
-  <img src="web3crit-scanner_animated.gif" alt="WEB3CRIT Scanner Gif" width="250">
+  <img src="web3crit_scanner_animated.gif" alt="WEB3CRIT Scanner Gif" width="250">
 </p>
 
 **Enhanced smart contract vulnerability scanner with control flow and data flow analysis**
