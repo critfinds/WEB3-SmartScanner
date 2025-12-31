@@ -20,34 +20,22 @@ class DelegateCallDetector extends BaseDetector {
   checkDelegatecall(node, code) {
     // Check if delegatecall target is controlled by user input
     if (this.hasUserControlledTarget(node, code)) {
-      this.addFinding({
-        title: 'User-Controlled Delegatecall',
-        description: 'Delegatecall is made to a user-controlled address. This allows attackers to execute arbitrary code in the context of this contract, potentially taking full control.',
-        location: this.getLocationString(node.loc),
-        line: node.loc ? node.loc.start.line : 0,
-        column: node.loc ? node.loc.start.column : 0,
-        code: code,
-        recommendation: 'Never allow user input to control delegatecall targets. Use a whitelist of trusted contract addresses or avoid delegatecall entirely.',
-        references: [
-          'https://swcregistry.io/docs/SWC-112',
-          'https://blog.openzeppelin.com/on-the-parity-wallet-multisig-hack-405a8c12e8f7'
-        ]
-      });
-    } else {
-      // Even with controlled targets, delegatecall is dangerous
-      this.addFinding({
-        title: 'Delegatecall Detected',
-        description: 'Delegatecall executes code in the context of the calling contract. Ensure the called contract is trusted and storage layout is compatible to prevent storage corruption.',
-        location: this.getLocationString(node.loc),
-        line: node.loc ? node.loc.start.line : 0,
-        column: node.loc ? node.loc.start.column : 0,
-        code: code,
-        recommendation: 'Only use delegatecall with fully trusted contracts. Verify storage layout compatibility. Consider using libraries or regular calls instead.',
-        references: [
-          'https://docs.soliditylang.org/en/latest/introduction-to-smart-contracts.html#delegatecall-callcode-and-libraries',
-          'https://swcregistry.io/docs/SWC-112'
-        ]
-      });
+      // Check if there's whitelist validation in the function
+      if (!this.hasWhitelistValidation(node)) {
+        this.addFinding({
+          title: 'User-Controlled Delegatecall',
+          description: 'Delegatecall is made to a user-controlled address. This allows attackers to execute arbitrary code in the context of this contract, potentially taking full control.',
+          location: this.getLocationString(node.loc),
+          line: node.loc ? node.loc.start.line : 0,
+          column: node.loc ? node.loc.start.column : 0,
+          code: code,
+          recommendation: 'Never allow user input to control delegatecall targets. Use a whitelist of trusted contract addresses or avoid delegatecall entirely.',
+          references: [
+            'https://swcregistry.io/docs/SWC-112',
+            'https://blog.openzeppelin.com/on-the-parity-wallet-multisig-hack-405a8c12e8f7'
+          ]
+        });
+      }
     }
 
     // Check if return value is checked
@@ -65,6 +53,23 @@ class DelegateCallDetector extends BaseDetector {
         ]
       });
     }
+  }
+
+  hasWhitelistValidation(node) {
+    // Check if the function containing this delegatecall has whitelist validation
+    // Look for patterns like: require(trustedAddresses[target], ...) or require(isApproved[target], ...)
+    const lineNum = node.loc ? node.loc.start.line : 0;
+
+    // Check a few lines before the delegatecall for validation
+    for (let i = Math.max(1, lineNum - 5); i < lineNum; i++) {
+      const line = this.getLineContent(i);
+      // Look for whitelist patterns
+      if (line.match(/require\s*\([^)]*\b(trusted|approved|whitelist|allowed|authorized)/i)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   hasUserControlledTarget(node, code) {

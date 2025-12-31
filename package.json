@@ -11,6 +11,13 @@
     "install-global": "npm install -g .",
     "scan": "node src/cli.js scan"
   },
+  "preferGlobal": true,
+  "files": [
+    "bin/",
+    "src/",
+    "README.md",
+    "INSTALL.md"
+  ],
   "keywords": [
     "solidity",
     "security",
@@ -23,7 +30,7 @@
     "access-control",
     "static-analysis"
   ],
-  "author": "Web3CRIT Team",
+  "author": "critfinds <jsbtc1@proton.me>",
   "license": "MIT",
   "dependencies": {
     "@solidity-parser/parser": "^0.14.5",
@@ -41,6 +48,6 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/web3crit/scanner"
+    "url": "https://github.com/critfinds/Web3CRIT-Scanner"
   }
 }

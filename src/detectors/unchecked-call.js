@@ -7,6 +7,88 @@ class UncheckedCallDetector extends BaseDetector {
       'Detects external calls whose return values are not checked',
       'HIGH'
     );
+    this.potentialIssues = [];
+    this.checkedVariables = new Set();
+  }
+
+  async detect(ast, sourceCode, fileName) {
+    this.findings = [];
+    this.ast = ast;
+    this.sourceCode = sourceCode;
+    this.fileName = fileName;
+    this.sourceLines = sourceCode.split('\n');
+    this.potentialIssues = [];
+    this.checkedVariables = new Set();
+
+    // First pass: collect potential issues and checked variables
+    this.traverse(ast);
+
+    // Second pass: filter out false positives
+    this.potentialIssues = this.potentialIssues.filter(issue => {
+      return !this.checkedVariables.has(issue.variableName);
+    });
+
+    // Add remaining issues as findings
+    this.potentialIssues.forEach(issue => {
+      this.addFinding(issue.finding);
+    });
+
+    return this.findings;
+  }
+
+  visitFunctionDefinition(node) {
+    // Scan entire function for all require/assert/if statements
+    if (node.body) {
+      this.scanForChecks(node.body);
+    }
+  }
+
+  scanForChecks(node) {
+    if (!node) return;
+
+    // Check for require(success) or assert(success)
+    if (node.type === 'ExpressionStatement' && node.expression) {
+      const expr = node.expression;
+      if (expr.type === 'FunctionCall' && expr.expression) {
+        const funcName = expr.expression.name;
+        if (funcName === 'require' || funcName === 'assert') {
+          // Check first argument
+          if (expr.arguments && expr.arguments.length > 0) {
+            const arg = expr.arguments[0];
+            if (arg.type === 'Identifier') {
+              this.checkedVariables.add(arg.name);
+            }
+            // Handle !variable pattern
+            if (arg.type === 'UnaryOperation' && arg.operator === '!' && arg.subExpression && arg.subExpression.type === 'Identifier') {
+              this.checkedVariables.add(arg.subExpression.name);
+            }
+          }
+        }
+      }
+    }
+
+    // Check for if (success) or if (!success)
+    if (node.type === 'IfStatement' && node.condition) {
+      if (node.condition.type === 'Identifier') {
+        this.checkedVariables.add(node.condition.name);
+      }
+      if (node.condition.type === 'UnaryOperation' && node.condition.operator === '!' && node.condition.subExpression && node.condition.subExpression.type === 'Identifier') {
+        this.checkedVariables.add(node.condition.subExpression.name);
+      }
+      // Recursively check inside if body
+      if (node.trueBody) this.scanForChecks(node.trueBody);
+      if (node.falseBody) this.scanForChecks(node.falseBody);
+    }
+
+    // Recursively check Block statements
+    if (node.type === 'Block' && node.statements) {
+      node.statements.forEach(stmt => this.scanForChecks(stmt));
+    }
+
+    // Check other nested structures
+    if (node.statements) {
+      node.statements.forEach(stmt => this.scanForChecks(stmt));
+    }
   }
 
   visitExpressionStatement(node) {
@@ -74,54 +156,23 @@ class UncheckedCallDetector extends BaseDetector {
         if (this.isLowLevelCall(code)) {
           // Check if variable name suggests it should be checked (like 'success')
           if (variable.name.toLowerCase().includes('success')) {
-            // This is actually good practice - assigning to success variable
-            // We'd need flow analysis to see if it's checked later
-            // For now, we'll warn about potential unchecked
-            this.addFinding({
-              title: 'Low-Level Call Return Value May Be Unchecked',
-              description: `Low-level call result assigned to '${variable.name}'. Ensure this value is properly checked before proceeding with contract logic.`,
-              location: this.getLocationString(node.loc),
-              line: node.loc ? node.loc.start.line : 0,
-              column: node.loc ? node.loc.start.column : 0,
-              code: this.getCodeSnippet(node.loc),
-              recommendation: 'Verify that the success variable is checked with require() or if statement before continuing execution.',
-              references: []
+            // Store as potential issue - will be filtered later
+            this.potentialIssues.push({
+              variableName: variable.name,
+              finding: {
+                title: 'Low-Level Call Return Value Not Checked',
+                description: `Low-level call result assigned to '${variable.name}' but never validated. Failed calls will be silently ignored.`,
+                location: this.getLocationString(node.loc),
+                line: node.loc ? node.loc.start.line : 0,
+                column: node.loc ? node.loc.start.column : 0,
+                code: this.getCodeSnippet(node.loc),
+                recommendation: 'Add validation: require(success, "Call failed") or if (!success) revert("Call failed")',
+                references: [
+                  'https://swcregistry.io/docs/SWC-104'
+                ]
+              }
             });
           }
-        }
-      }
-    }
-  }
-
-  visitFunctionCall(node) {
-    // Check for external contract calls
-    if (node.expression && node.expression.type === 'MemberAccess') {
-      const memberAccess = node.expression;
-      const code = this.getCodeSnippet(node.loc);
-
-      // Check for contract interface calls that might fail
-      if (!code.includes('.transfer(') && // transfer reverts automatically
-          !code.includes('.require(') &&
-          !code.includes('.assert(') &&
-          this.looksLikeExternalCall(memberAccess)) {
-
-        // This might be an external contract call
-        // We can only detect obvious cases
-        const memberName = memberAccess.memberName;
-
-        if (memberName && !this.isSafeFunction(memberName)) {
-          this.addFinding({
-            title: 'External Call Without Error Handling',
-            description: `External call to '${memberName}' may fail silently. External calls can fail due to out-of-gas errors or reverts.`,
-            location: this.getLocationString(node.loc),
-            line: node.loc ? node.loc.start.line : 0,
-            column: node.loc ? node.loc.start.column : 0,
-            code: code,
-            recommendation: 'Implement proper error handling for external calls. Consider using try/catch blocks (Solidity 0.6+) or check return values.',
-            references: [
-              'https://docs.soliditylang.org/en/latest/control-structures.html#try-catch'
-            ]
-          });
         }
       }
     }
@@ -134,39 +185,6 @@ class UncheckedCallDetector extends BaseDetector {
            code.includes('.delegatecall{') ||
            code.includes('.staticcall(') ||
            code.includes('.staticcall{');
-  }
-
-  looksLikeExternalCall(memberAccess) {
-    // Check if this looks like an external contract call
-    // This is a heuristic and may have false positives
-    if (memberAccess.expression) {
-      const expr = memberAccess.expression;
-
-      // Check if it's calling a function on a variable (likely a contract)
-      if (expr.type === 'Identifier') {
-        return true;
-      }
-
-      // Check if it's calling a function on an indexed access (like contracts[0].function())
-      if (expr.type === 'IndexAccess') {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  isSafeFunction(functionName) {
-    // Functions that are known to be safe or internal operations
-    const safeFunctions = [
-      'add', 'sub', 'mul', 'div', 'mod', // SafeMath
-      'push', 'pop', 'length', // Array operations
-      'keccak256', 'sha256', 'ripemd160', // Hash functions
-      'encode', 'decode', 'encodePacked', // Encoding
-      'toString', 'toUpperCase', 'toLowerCase' // String operations
-    ];
-
-    return safeFunctions.includes(functionName);
   }
 
   getLocationString(loc) {
