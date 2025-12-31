@@ -1,0 +1,39 @@
+# Git files
+.git
+.gitignore
+.gitattributes
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Test files
+test/
+*.test.js
+*.spec.js
+
+# Build and temp files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+*.tgz
+
+# Documentation development files
+docs/
+*.draft.md
+
+# CI/CD files
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Other
+node_modules/
+coverage/
+.nyc_output/
