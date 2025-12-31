@@ -21,11 +21,26 @@ Web3CRIT Scanner is a production-grade static analysis tool for Solidity smart c
 
 ## Installation
 
-### From Source
+### Quick Install (Recommended)
 
 ```bash
-git clone <https://github.com/critfinds/Web3CRIT-Scanner>
+git clone https://github.com/critfinds/Web3CRIT-Scanner
 cd Web3CRIT-Scanner
+./install.sh
+```
+
+The install script will:
+- Check Node.js and npm versions
+- Install all dependencies
+- Install web3crit globally
+- Verify the installation
+
+### Manual Installation
+
+```bash
+git clone https://github.com/critfinds/Web3CRIT-Scanner
+cd Web3CRIT-Scanner
+npm install
 npm install -g .
 ```
 
@@ -41,7 +56,7 @@ npm install -g web3crit-scanner
 npx web3crit-scanner scan contract.sol
 ```
 
-See [INSTALL.md](INSTALL.md) for detailed installation instructions.
+See [INSTALL.md](INSTALL.md) for detailed installation instructions and troubleshooting.
 
 ## Usage
 
