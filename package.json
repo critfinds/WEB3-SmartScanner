@@ -23,7 +23,7 @@
     "access-control",
     "static-analysis"
   ],
-  "author": "Web3CRIT Team",
+  "author": "critfinds",
   "license": "MIT",
   "dependencies": {
     "@solidity-parser/parser": "^0.14.5",
