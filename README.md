@@ -24,7 +24,7 @@ Web3CRIT Scanner is a production-grade static analysis tool for Solidity smart c
 ### From Source
 
 ```bash
-git clone <https://github.com/critfinds/Web3CRIT-Scanner>
+git clone https://github.com/critfinds/Web3CRIT-Scanner
 cd Web3CRIT-Scanner
 npm install -g .
 ```
