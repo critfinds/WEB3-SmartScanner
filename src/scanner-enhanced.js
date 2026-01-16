@@ -15,6 +15,21 @@ const UncheckedCallDetector = require('./detectors/unchecked-call');
 const DelegateCallDetector = require('./detectors/delegatecall');
 const UnprotectedSelfdestruct = require('./detectors/selfdestruct');
 
+// Advanced Web3 vulnerability detectors
+const IntegerOverflowDetector = require('./detectors/integer-overflow');
+const FlashLoanDetector = require('./detectors/flash-loan');
+const FrontRunningDetector = require('./detectors/frontrunning');
+const TimestampDependenceDetector = require('./detectors/timestamp-dependence');
+const GasGriefingDetector = require('./detectors/gas-griefing');
+const DeprecatedFunctionsDetector = require('./detectors/deprecated-functions');
+
+// High-value TVL contract detectors (NEW)
+const ProxyVulnerabilitiesDetector = require('./detectors/proxy-vulnerabilities');
+const SignatureReplayDetector = require('./detectors/signature-replay');
+const CrossContractReentrancyDetector = require('./detectors/cross-contract-reentrancy');
+const TokenStandardComplianceDetector = require('./detectors/token-standard-compliance');
+const TOCTOUDetector = require('./detectors/toctou');
+
 /**
  * Enhanced Web3CRIT Scanner
  * Uses control flow and data flow analysis instead of pattern matching
@@ -38,7 +53,22 @@ class Web3CRITScannerEnhanced {
       // Keep simple detectors for operations that don't need deep analysis
       new UncheckedCallDetector(),
       new DelegateCallDetector(),
-      new UnprotectedSelfdestruct()
+      new UnprotectedSelfdestruct(),
+
+      // Advanced Web3 vulnerability detectors
+      new IntegerOverflowDetector(),
+      new FlashLoanDetector(),
+      new FrontRunningDetector(),
+      new TimestampDependenceDetector(),
+      new GasGriefingDetector(),
+      new DeprecatedFunctionsDetector(),
+
+      // High-value TVL contract detectors (NEW - Priority Order)
+      new ProxyVulnerabilitiesDetector(),        // CRITICAL: Proxy vulnerabilities
+      new CrossContractReentrancyDetector(),     // CRITICAL: Cross-contract reentrancy
+      new SignatureReplayDetector(),            // HIGH: Signature replay
+      new TokenStandardComplianceDetector(),    // HIGH: ERC standard compliance
+      new TOCTOUDetector()                      // HIGH: Time-of-check to time-of-use
     ];
 
     this.findings = [];
@@ -86,8 +116,6 @@ class Web3CRITScannerEnhanced {
       throw new Error(`Failed to parse Solidity code: ${error.message}`);
     }
 
-    await this.sleep(200);
-
     // Progress: Building control flow graph
     if (this.options.onProgress) {
       this.options.onProgress({
@@ -101,8 +129,6 @@ class Web3CRITScannerEnhanced {
     const cfgAnalyzer = new ControlFlowAnalyzer();
     const cfg = cfgAnalyzer.analyze(ast, sourceCode);
 
-    await this.sleep(200);
-
     // Progress: Data flow analysis
     if (this.options.onProgress) {
       this.options.onProgress({
@@ -115,8 +141,6 @@ class Web3CRITScannerEnhanced {
     // Perform data flow analysis
     const dataFlowAnalyzer = new DataFlowAnalyzer(cfg);
     const dataFlow = dataFlowAnalyzer.analyze();
-
-    await this.sleep(200);
 
     const contractFindings = [];
     const totalDetectors = this.detectors.length;
@@ -141,8 +165,6 @@ class Web3CRITScannerEnhanced {
         // Pass CFG and data flow to enhanced detectors
         const detectorFindings = await detector.detect(ast, sourceCode, fileName, cfg, dataFlow);
         contractFindings.push(...detectorFindings);
-
-        await this.sleep(150);
       } catch (error) {
         if (this.options.verbose) {
           console.error(`Detector ${detector.name} failed: ${error.message}`);
@@ -153,13 +175,11 @@ class Web3CRITScannerEnhanced {
     // Progress: Analyzing results
     if (this.options.onProgress) {
       this.options.onProgress({
-        stage: 'analyzing',
+        stage: 'filtering',
         message: 'Filtering exploitable issues...',
         fileName
       });
     }
-
-    await this.sleep(200);
 
     // Filter by severity and exploitability
     const filteredFindings = this.filterFindings(contractFindings);
@@ -188,8 +208,6 @@ class Web3CRITScannerEnhanced {
         totalFiles
       });
     }
-
-    await this.sleep(200);
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -240,23 +258,36 @@ class Web3CRITScannerEnhanced {
   }
 
   /**
-   * Filter findings by severity and exploitability
-   * Only report issues that are realistically exploitable
+   * Filter findings by severity, exploitability, and confidence
+   * Only report issues that are realistically exploitable with high confidence
    */
   filterFindings(findings) {
     // Filter by severity level
     let filtered = this.filterBySeverity(findings);
 
-    // Only report exploitable issues (or high confidence non-exploitable warnings)
+    // Apply exploitability-based filtering
     filtered = filtered.filter(finding => {
-      // Always report CRITICAL and HIGH severity with exploitable flag
-      if (finding.exploitable === true) {
+      // Always report high-confidence findings
+      if (finding.isHighConfidence === true) {
         return true;
       }
 
-      // Report high confidence findings even if not marked exploitable
-      if (finding.confidence === 'HIGH' && finding.severity === 'CRITICAL') {
+      // Always report CRITICAL severity with exploitable flag
+      if (finding.severity === 'CRITICAL' && finding.exploitable === true) {
         return true;
+      }
+
+      // Report HIGH severity with high/medium confidence
+      if (finding.severity === 'HIGH') {
+        if (finding.confidence === 'HIGH') return true;
+        if (finding.confidence === 'MEDIUM' && finding.exploitable === true) return true;
+      }
+
+      // Report MEDIUM severity only with high confidence AND exploitable
+      if (finding.severity === 'MEDIUM') {
+        if (finding.confidence === 'HIGH' && finding.exploitable === true) return true;
+        // Also include medium confidence if exploitability score is high
+        if (finding.exploitabilityScore >= 60) return true;
       }
 
       // Filter out low confidence, non-exploitable findings
@@ -264,7 +295,29 @@ class Web3CRITScannerEnhanced {
         return false;
       }
 
-      return true;
+      // Filter out low severity with low confidence
+      if (finding.severity === 'LOW' && finding.confidence === 'LOW') {
+        return false;
+      }
+
+      // Filter out INFO level unless high confidence
+      if (finding.severity === 'INFO' && finding.confidence !== 'HIGH') {
+        return false;
+      }
+
+      // Default: include if exploitability score >= 50
+      return finding.exploitabilityScore >= 50;
+    });
+
+    // Sort by exploitability score (highest first)
+    filtered.sort((a, b) => {
+      // First by severity
+      const severityOrder = { 'CRITICAL': 5, 'HIGH': 4, 'MEDIUM': 3, 'LOW': 2, 'INFO': 1 };
+      const severityDiff = (severityOrder[b.severity] || 0) - (severityOrder[a.severity] || 0);
+      if (severityDiff !== 0) return severityDiff;
+
+      // Then by exploitability score
+      return (b.exploitabilityScore || 0) - (a.exploitabilityScore || 0);
     });
 
     return filtered;
@@ -304,20 +357,161 @@ class Web3CRITScannerEnhanced {
   }
 
   getFindings() {
+    // Separate high-confidence findings
+    const highConfidenceFindings = this.findings.filter(f => f.isHighConfidence);
+    const otherFindings = this.findings.filter(f => !f.isHighConfidence);
+
     return {
       findings: this.findings,
-      stats: this.stats,
-      analysis: {
+      highConfidenceFindings: highConfidenceFindings,
+      stats: {
+        ...this.stats,
+        highConfidence: highConfidenceFindings.length,
+        withPoC: this.findings.filter(f => f.foundryPoC).length
+      },
+        analysis: {
         engine: 'enhanced',
-        version: '4.0.0',
+        version: '5.2.0',
         features: [
           'Control Flow Analysis',
           'Data Flow Analysis',
           'Cross-Function Reentrancy Detection',
+          'Cross-Contract Reentrancy Detection',
           'Modifier Logic Validation',
-          'Exploitability Verification'
+          'Exploitability Scoring (0-100)',
+          'Attack Vector Classification',
+          'Context-Aware Detection',
+          'False Positive Reduction',
+          'Foundry PoC Generation',
+          'Integer Overflow/Underflow Detection',
+          'Flash Loan Attack Detection',
+          'Front-Running/MEV Protection',
+          'Timestamp Manipulation Detection',
+          'Gas Griefing/DoS Prevention',
+          'Proxy Contract Vulnerabilities (UUPS, Transparent)',
+          'Signature Replay Protection',
+          'Token Standard Compliance (ERC20/721/1155)',
+          'TOCTOU (Time-of-Check to Time-of-Use) Detection'
         ]
       }
+    };
+  }
+
+  /**
+   * Get high-confidence findings with Foundry PoC templates
+   * Only returns findings that meet the high-confidence threshold
+   */
+  getHighConfidenceFindings() {
+    return this.findings.filter(f => f.isHighConfidence && f.foundryPoC);
+  }
+
+  /**
+   * Generate Foundry test file with all high-confidence PoCs
+   * @param {string} contractName - Name for the test file
+   * @returns {string} Complete Foundry test file content
+   */
+  generateFoundryTestFile(contractName = 'VulnerabilityExploits') {
+    const pocFindings = this.getHighConfidenceFindings();
+
+    if (pocFindings.length === 0) {
+      return null;
+    }
+
+    const header = `// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "forge-std/Test.sol";
+
+/**
+ * Foundry Proof of Concept Tests
+ * Generated by Web3CRIT Scanner v5.1.0
+ *
+ * High-Confidence Findings: ${pocFindings.length}
+ *
+ * To run: forge test --match-contract ${contractName} -vvv
+ */
+`;
+
+    const contracts = pocFindings.map((finding, index) => {
+      const testName = this.sanitizeTestName(finding.title);
+      const attackVector = finding.attackVector || 'unknown';
+
+      return `
+/**
+ * Finding #${index + 1}: ${finding.title}
+ * Severity: ${finding.severity}
+ * Confidence: ${finding.confidence}
+ * Exploitability Score: ${finding.exploitabilityScore}/100
+ * Attack Vector: ${attackVector}
+ * File: ${finding.fileName}:${finding.line}
+ *
+ * Description: ${finding.description}
+ */
+${finding.foundryPoC}
+`;
+    }).join('\n');
+
+    return header + contracts;
+  }
+
+  /**
+   * Sanitize a title into a valid Solidity test function name
+   */
+  sanitizeTestName(title) {
+    return title
+      .replace(/[^a-zA-Z0-9\s]/g, '')
+      .split(/\s+/)
+      .map((word, i) => i === 0 ? word.toLowerCase() : word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join('');
+  }
+
+  /**
+   * Get summary of findings by attack vector
+   */
+  getFindingsSummary() {
+    const byVector = {};
+    const bySeverity = {};
+
+    for (const finding of this.findings) {
+      // By attack vector
+      const vector = finding.attackVector || 'unknown';
+      if (!byVector[vector]) {
+        byVector[vector] = { count: 0, highConfidence: 0, findings: [] };
+      }
+      byVector[vector].count++;
+      if (finding.isHighConfidence) {
+        byVector[vector].highConfidence++;
+      }
+      byVector[vector].findings.push({
+        title: finding.title,
+        severity: finding.severity,
+        exploitabilityScore: finding.exploitabilityScore
+      });
+
+      // By severity
+      const severity = finding.severity;
+      if (!bySeverity[severity]) {
+        bySeverity[severity] = 0;
+      }
+      bySeverity[severity]++;
+    }
+
+    return {
+      total: this.findings.length,
+      highConfidence: this.findings.filter(f => f.isHighConfidence).length,
+      withPoC: this.findings.filter(f => f.foundryPoC).length,
+      byAttackVector: byVector,
+      bySeverity: bySeverity,
+      topExploitable: this.findings
+        .filter(f => f.exploitabilityScore >= 70)
+        .sort((a, b) => b.exploitabilityScore - a.exploitabilityScore)
+        .slice(0, 5)
+        .map(f => ({
+          title: f.title,
+          severity: f.severity,
+          score: f.exploitabilityScore,
+          vector: f.attackVector
+        }))
     };
   }
 

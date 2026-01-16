@@ -33,7 +33,7 @@
   "author": "critfinds <jsbtc1@proton.me>",
   "license": "MIT",
   "dependencies": {
-    "@solidity-parser/parser": "^0.14.5",
+    "@solidity-parser/parser": "^0.20.2",
     "commander": "^9.4.1",
     "chalk": "^4.1.2",
     "ora": "^5.4.1",

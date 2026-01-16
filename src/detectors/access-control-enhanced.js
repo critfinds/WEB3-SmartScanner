@@ -24,6 +24,7 @@ class AccessControlEnhancedDetector extends BaseDetector {
     this.dataFlow = dataFlow;
     this.sourceCode = sourceCode;
     this.fileName = fileName;
+    this.sourceLines = sourceCode.split('\n');
     this.findings = [];
 
     if (!cfg) {
@@ -82,8 +83,69 @@ class AccessControlEnhancedDetector extends BaseDetector {
       return false;
     }
 
+    // Check if function has internal access control (require/assert checks in body)
+    if (this.hasInternalAccessControl(funcInfo)) {
+      return false;
+    }
+
+    // Check if function is a self-service withdrawal pattern (users withdraw own funds)
+    if (this.isSelfServiceWithdrawal(funcInfo)) {
+      return false;
+    }
+
     // Check if function performs sensitive operations
     return this.hasSensitiveOperations(funcInfo);
+  }
+
+  /**
+   * Check if function has internal access control checks
+   * (access control via require/assert inside function body instead of modifier)
+   */
+  hasInternalAccessControl(funcInfo) {
+    if (!funcInfo.node || !funcInfo.node.body) return false;
+
+    const funcCode = this.getCodeSnippet(funcInfo.node.loc);
+    if (!funcCode) return false;
+
+    // Check for common internal access control patterns
+    const internalAccessPatterns = [
+      /require\s*\(\s*msg\.sender\s*==\s*\w+/i,  // require(msg.sender == owner)
+      /require\s*\(\s*\w+\s*==\s*msg\.sender/i,  // require(pendingOwner == msg.sender)
+      /assert\s*\(\s*msg\.sender\s*==\s*\w+/i,
+      /if\s*\(\s*msg\.sender\s*!=\s*\w+\)\s*revert/i,  // if (msg.sender != owner) revert
+      /onlyOwner|onlyAdmin|onlyRole/i,  // Modifier names in function
+    ];
+
+    return internalAccessPatterns.some(pattern => pattern.test(funcCode));
+  }
+
+  /**
+   * Check if function is a self-service withdrawal pattern
+   * (users can only withdraw their own funds based on msg.sender)
+   */
+  isSelfServiceWithdrawal(funcInfo) {
+    const funcNameLower = funcInfo.name.toLowerCase().replace(/[_\s]/g, '');
+
+    // Check if function name suggests self-service pattern
+    const selfServiceNames = ['withdraw', 'withdrawfunds', 'claim', 'redeem', 'collect'];
+    if (!selfServiceNames.some(name => funcNameLower.includes(name))) {
+      return false;
+    }
+
+    if (!funcInfo.node || !funcInfo.node.body) return false;
+
+    const funcCode = this.getCodeSnippet(funcInfo.node.loc);
+    if (!funcCode) return false;
+
+    // Check if function accesses user-specific storage using msg.sender
+    // e.g., balances[msg.sender] or pendingWithdrawals[msg.sender]
+    const selfServicePatterns = [
+      /\[\s*msg\.sender\s*\]/,  // mapping[msg.sender]
+      /balances\s*\[\s*msg\.sender\s*\]/i,
+      /pending\w*\s*\[\s*msg\.sender\s*\]/i,
+    ];
+
+    return selfServicePatterns.some(pattern => pattern.test(funcCode));
   }
 
   /**

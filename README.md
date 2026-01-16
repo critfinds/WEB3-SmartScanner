@@ -100,7 +100,11 @@ cat slither-results.json | jq '.results.detectors | length'
 
 ## Vulnerability Detectors
 
-Web3CRIT v4.0.0 includes 5 enhanced detectors with logic-based analysis:
+Web3CRIT v5.2.0 includes enhanced detectors with logic-based analysis, plus specialized detectors for high-value TVL contracts:
+
+### Core Enhanced Detectors
+
+Web3CRIT v4.0.0+ includes 5 enhanced detectors with logic-based analysis:
 
 ### 1. Reentrancy (Enhanced) - CRITICAL
 
@@ -184,6 +188,130 @@ function destroy(address payable recipient) public {
     selfdestruct(recipient);  // Anyone can destroy contract
 }
 ```
+
+### High-Value TVL Contract Detectors (v5.2.0+)
+
+These detectors are specifically designed for high-value contracts (>$1M TVL) and provide deeper coverage:
+
+### 6. Proxy Contract Vulnerabilities - CRITICAL
+
+Detects critical issues in upgradeable contracts (UUPS, Transparent Proxies, EIP-1967):
+- **Unprotected Initializers** - Missing initialization protection allowing re-initialization
+- **Unauthorized Upgrades** - Upgrade functions without access control
+- **Missing _authorizeUpgrade** - UUPS pattern without required authorization
+- **Storage Collision** - Potential storage layout conflicts in upgrades
+- **Unprotected Delegatecall** - Delegatecall without implementation validation
+- **EIP-1967 Storage Access** - Direct storage slot manipulation without protection
+
+**Example Vulnerable Code:**
+```solidity
+// Unprotected initializer
+function initialize(address _owner) public {
+    owner = _owner;  // Can be called multiple times!
+}
+
+// Unauthorized upgrade
+function upgrade(address newImpl) public {
+    implementation = newImpl;  // Anyone can upgrade!
+}
+```
+
+**Testing Strategy:**
+- Unit tests with vulnerable proxy patterns
+- Integration tests with OpenZeppelin proxy contracts
+- Foundry PoCs demonstrating initialization and upgrade exploits
+
+### 7. Signature Replay - HIGH
+
+Detects missing replay protection in contracts using off-chain signatures:
+- **Missing Nonce** - Signatures can be reused multiple times
+- **Missing Expiration** - Old signatures remain valid indefinitely
+- **Missing Chain ID** - Cross-chain replay attacks possible
+- **Weak Validation** - Direct ecrecover without EIP-712
+
+**Example Vulnerable Code:**
+```solidity
+function permitTransfer(address from, address to, uint256 amount, bytes memory sig) public {
+    address signer = ecrecover(...);
+    require(signer == from);
+    // No nonce check - signature can be replayed!
+    balances[from] -= amount;
+    balances[to] += amount;
+}
+```
+
+**Testing Strategy:**
+- Unit tests with signature verification functions
+- Integration tests with EIP-2612 permit patterns
+- Foundry PoCs demonstrating signature replay attacks
+
+### 8. Cross-Contract Reentrancy - CRITICAL
+
+Detects complex reentrancy attacks involving multiple contracts:
+- **Multi-Contract Reentrancy** - Reentrancy across multiple contracts in same transaction
+- **State-Dependent Reentrancy** - State changes in one contract affecting another
+- **Delegatecall Reentrancy** - Reentrancy via delegatecall patterns
+- **Missing Guards** - Cross-contract interactions without reentrancy protection
+
+**Example Vulnerable Code:**
+```solidity
+function withdrawFromBoth() public {
+    uint256 balanceA = balances[msg.sender];
+    contractA.withdraw();  // External call
+    balances[msg.sender] = 0;  // State update after call
+    contractB.deposit{value: balanceB}();  // Another external call
+}
+```
+
+**Testing Strategy:**
+- Unit tests with multiple contract interactions
+- Integration tests with complex DeFi protocols
+- Foundry PoCs demonstrating cross-contract reentrancy
+
+### 9. Token Standard Compliance - HIGH
+
+Ensures tokens strictly follow ERC standards (ERC20, ERC721, ERC1155):
+- **Missing Required Functions** - Functions required by standard not implemented
+- **Missing Events** - Transfer, Approval events not emitted
+- **Incorrect Signatures** - Function signatures don't match standard
+- **Non-Standard Return Values** - Missing bool return values
+
+**Example Vulnerable Code:**
+```solidity
+// ERC20 missing Transfer event
+function transfer(address to, uint256 amount) public returns (bool) {
+    balances[msg.sender] -= amount;
+    balances[to] += amount;
+    // Missing: emit Transfer(msg.sender, to, amount);
+    return true;
+}
+```
+
+**Testing Strategy:**
+- Unit tests against ERC20/721/1155 standard specifications
+- Integration tests with DEXs and wallets
+- Compliance verification against OpenZeppelin implementations
+
+### 10. TOCTOU (Time-of-Check to Time-of-Use) - HIGH
+
+Detects race conditions where contract state changes between check and use:
+- **Balance Check Before Transfer** - Balance checked, then external call, then transfer
+- **Allowance Check Before Transfer** - Allowance checked, then external call, then transferFrom
+- **State Check Before Use** - State variable checked, then external call, then used
+
+**Example Vulnerable Code:**
+```solidity
+function withdraw() public {
+    uint256 balance = balances[msg.sender];  // Check
+    (bool success, ) = msg.sender.call{value: balance}("");  // External call
+    balances[msg.sender] = 0;  // Use (state update after call)
+}
+```
+
+**Testing Strategy:**
+- Unit tests with check-use patterns
+- Integration tests with callback patterns
+- Foundry PoCs demonstrating TOCTOU exploits
 
 ## Output Formats
 
@@ -423,9 +551,68 @@ Contributions are welcome! Please:
 
 If you find vulnerabilities in this tool or have suggestions for new detectors, please open an issue or submit a pull request.
 
+## Testing Strategy
+
+### Unit Tests
+
+Each detector includes comprehensive unit tests:
+- **Vulnerable Contracts**: Test contracts demonstrating each vulnerability pattern
+- **Secure Contracts**: Test contracts with proper mitigations (should produce minimal findings)
+- **Edge Cases**: Boundary conditions and complex scenarios
+
+Run tests:
+```bash
+npm test
+```
+
+### Integration Tests
+
+Integration tests verify detectors work together:
+- Multi-contract scanning
+- Complex protocol interactions
+- Real-world contract patterns
+
+### Foundry PoCs
+
+High-confidence findings (confidence: HIGH, exploitability score ≥ 70) automatically generate Foundry PoC templates:
+
+```bash
+web3crit scan contracts/ --format json --output results.json
+# PoCs included in findings with foundryPoC field
+```
+
+Generate complete Foundry test file:
+```javascript
+const scanner = new Web3CRITScanner();
+await scanner.scanDirectory('contracts/');
+const testFile = scanner.generateFoundryTestFile('VulnerabilityExploits');
+// Save to test/VulnerabilityExploits.t.sol
+```
+
+### Testing Priority for High-Value TVL Contracts
+
+For contracts with >$1M TVL, recommended testing order:
+
+1. **Proxy Vulnerabilities** (CRITICAL) - Test first for upgradeable contracts
+2. **Cross-Contract Reentrancy** (CRITICAL) - Test for multi-contract protocols
+3. **Signature Replay** (HIGH) - Test for meta-transaction/permit patterns
+4. **Token Standard Compliance** (HIGH) - Test for token contracts
+5. **TOCTOU** (HIGH) - Test for complex state management
+
 ## Version History
 
-### v4.0.0 - Enhanced Analysis Engine (Current)
+### v5.2.0 - High-Value TVL Detectors (Current)
+
+- **NEW**: Proxy Contract Vulnerabilities detector (UUPS, Transparent Proxies)
+- **NEW**: Signature Replay detector for meta-transactions
+- **NEW**: Cross-Contract Reentrancy detector
+- **NEW**: Token Standard Compliance detector (ERC20/721/1155)
+- **NEW**: TOCTOU (Time-of-Check to Time-of-Use) detector
+- Enhanced Foundry PoC generation for high-confidence findings
+- Comprehensive test suite with vulnerable contract examples
+- Improved exploitability scoring (0-100)
+
+### v4.0.0 - Enhanced Analysis Engine
 
 - Control flow graph (CFG) builder
 - Data flow and taint analysis

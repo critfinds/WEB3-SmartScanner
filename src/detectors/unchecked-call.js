@@ -11,12 +11,14 @@ class UncheckedCallDetector extends BaseDetector {
     this.checkedVariables = new Set();
   }
 
-  async detect(ast, sourceCode, fileName) {
+  async detect(ast, sourceCode, fileName, cfg, dataFlow) {
     this.findings = [];
     this.ast = ast;
     this.sourceCode = sourceCode;
     this.fileName = fileName;
     this.sourceLines = sourceCode.split('\n');
+    this.cfg = cfg;
+    this.dataFlow = dataFlow;
     this.potentialIssues = [];
     this.checkedVariables = new Set();
 
@@ -150,7 +152,8 @@ class UncheckedCallDetector extends BaseDetector {
     if (node.variables && node.variables.length > 0) {
       const variable = node.variables[0];
 
-      if (variable.name && node.initialValue) {
+      // Handle null variables (from tuple destruction like "(bool success, ) = ...")
+      if (variable && variable.name && node.initialValue) {
         const code = this.getCodeSnippet(node.initialValue.loc);
 
         if (this.isLowLevelCall(code)) {

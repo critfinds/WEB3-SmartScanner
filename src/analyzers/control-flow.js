@@ -1,345 +1,248 @@
+const parser = require('@solidity-parser/parser');
+
 /**
- * Control Flow Graph (CFG) Analyzer
- * Tracks execution paths, function calls, and state changes across the contract
+ * Control Flow Graph (CFG) Analyzer (Rewritten)
+ * Tracks execution paths, function calls, and state changes using the official parser visitor
  */
 class ControlFlowAnalyzer {
   constructor() {
-    this.contracts = new Map();
-    this.functions = new Map();
-    this.modifiers = new Map();
-    this.stateVariables = new Map();
-    this.callGraph = new Map(); // function -> [called functions]
-    this.externalCalls = new Map(); // function -> [external call sites]
-    this.stateModifications = new Map(); // function -> [state variable writes]
+    this.reset();
   }
 
-  /**
-   * Build complete control flow graph from AST
-   */
   analyze(ast, sourceCode) {
     this.sourceCode = sourceCode;
     this.reset();
 
-    this.visit(ast);
-    this.buildCallGraph();
-    this.analyzeDataFlow();
+    let currentContract = null;
+    let currentFunction = null;
+    let currentModifier = null;
+
+    parser.visit(ast, {
+      ContractDefinition: node => {
+        currentContract = {
+          name: node.name,
+          kind: node.kind,
+          baseContracts: node.baseContracts || [],
+          stateVariables: [],
+          functions: [],
+          modifiers: []
+        };
+        this.contracts.set(node.name, currentContract);
+      },
+
+      'ContractDefinition:exit': () => {
+        currentContract = null;
+      },
+
+      ModifierDefinition: node => {
+        if (!currentContract) return;
+        const modKey = `${currentContract.name}.${node.name}`;
+        currentModifier = {
+          name: node.name,
+          contract: currentContract.name,
+          node: node,
+          requireStatements: [],
+          checksAccess: false,
+          checksOwnership: false,
+          checksRole: false
+        };
+        this.modifiers.set(modKey, currentModifier);
+        currentContract.modifiers.push(node.name);
+      },
+
+      'ModifierDefinition:exit': () => {
+        // Analyze collected require statements to determine access control type
+        if (currentModifier) {
+          this.analyzeModifierAccessControl(currentModifier);
+        }
+        currentModifier = null;
+      },
+
+      FunctionDefinition: node => {
+        if (!currentContract) return;
+        const funcName = node.name || (node.isConstructor ? 'constructor' : (node.isReceiveEther ? 'receive' : 'fallback'));
+        const funcKey = `${currentContract.name}.${funcName}`;
+        currentFunction = {
+          name: funcName,
+          contract: currentContract.name,
+          visibility: node.visibility || 'public',
+          stateMutability: node.stateMutability,
+          modifiers: (node.modifiers || []).map(m => m.name),
+          parameters: (node.parameters || []).map(p => ({
+            name: p.name,
+            type: this.getTypeName(p.typeName)
+          })),
+          isConstructor: node.isConstructor,
+          isFallback: !node.name && !node.isConstructor && !node.isReceiveEther,
+          isReceive: node.isReceiveEther,
+          externalCalls: [],
+          stateWrites: [],
+          stateReads: [],
+          node: node
+        };
+        this.functions.set(funcKey, currentFunction);
+        currentContract.functions.push(funcName);
+      },
+
+      'FunctionDefinition:exit': () => {
+        currentFunction = null;
+      },
+
+      StateVariableDeclaration: node => {
+        if (!currentContract) return;
+        node.variables.forEach(variable => {
+          const varInfo = {
+            name: variable.name,
+            type: this.getTypeName(variable.typeName),
+            visibility: variable.visibility || 'internal',
+            isConstant: variable.isDeclaredConst,
+            isImmutable: variable.isImmutable,
+            contract: currentContract.name
+          };
+          this.stateVariables.set(`${currentContract.name}.${variable.name}`, varInfo);
+          currentContract.stateVariables.push(variable.name);
+        });
+      },
+
+      FunctionCall: node => {
+        // Track require/assert statements in modifiers
+        if (currentModifier && node.expression && node.expression.type === 'Identifier') {
+          const funcName = node.expression.name;
+          if (funcName === 'require' || funcName === 'assert') {
+            const requireCode = this.getSourceFromNode(node);
+            currentModifier.requireStatements.push(requireCode);
+          }
+        }
+
+        if (!currentFunction) return;
+
+        // Handle direct MemberAccess: .send(), .transfer()
+        if (node.expression && node.expression.type === 'MemberAccess') {
+          const memberName = node.expression.memberName;
+          if (['call', 'delegatecall', 'staticcall', 'send', 'transfer'].includes(memberName)) {
+            currentFunction.externalCalls.push({
+              type: memberName,
+              target: this.getSourceFromNode(node.expression.expression),
+              loc: node.loc
+            });
+          }
+        }
+
+        // Handle NameValueExpression: .call{value: x}(), .call{gas: x}()
+        if (node.expression && node.expression.type === 'NameValueExpression') {
+          const innerExpr = node.expression.expression;
+          if (innerExpr && innerExpr.type === 'MemberAccess') {
+            const memberName = innerExpr.memberName;
+            if (['call', 'delegatecall', 'staticcall'].includes(memberName)) {
+              currentFunction.externalCalls.push({
+                type: memberName,
+                target: this.getSourceFromNode(innerExpr.expression),
+                loc: node.loc
+              });
+            }
+          }
+        }
+      },
+
+      Identifier: node => {
+        // Track state variable reads
+        if (currentFunction && currentContract && this.isStateVariable(node, currentContract.name)) {
+          currentFunction.stateReads.push({
+            variable: node.name,
+            loc: node.loc
+          });
+        }
+      },
+
+      BinaryOperation: node => {
+        if (!currentFunction || !currentContract) return;
+        // Track state writes for assignment operators
+        if (node.operator === '=' || node.operator === '+=' || node.operator === '-=' ||
+            node.operator === '*=' || node.operator === '/=') {
+          if (this.isStateVariable(node.left, currentContract.name)) {
+            currentFunction.stateWrites.push({
+              variable: this.getVariableName(node.left),
+              loc: node.loc
+            });
+          }
+        }
+      }
+    });
 
     return {
       contracts: this.contracts,
       functions: this.functions,
       modifiers: this.modifiers,
-      stateVariables: this.stateVariables,
-      callGraph: this.callGraph,
-      externalCalls: this.externalCalls,
-      stateModifications: this.stateModifications
+      stateVariables: this.stateVariables
     };
+  }
+
+  /**
+   * Analyze modifier require statements to determine what kind of access control it provides
+   */
+  analyzeModifierAccessControl(modInfo) {
+    const allRequires = modInfo.requireStatements.join(' ').toLowerCase();
+
+    // Check for ownership patterns
+    if (allRequires.includes('msg.sender') &&
+        (allRequires.includes('owner') || allRequires.includes('admin'))) {
+      modInfo.checksOwnership = true;
+      modInfo.checksAccess = true;
+    }
+
+    // Check for role-based patterns
+    if (allRequires.includes('hasrole') || allRequires.includes('role') ||
+        allRequires.includes('isauthorized') || allRequires.includes('onlyrole')) {
+      modInfo.checksRole = true;
+      modInfo.checksAccess = true;
+    }
+
+    // Check for general access control patterns
+    if (allRequires.includes('msg.sender') || allRequires.includes('tx.origin')) {
+      modInfo.checksAccess = true;
+    }
+
+    // Check for reentrancy guard patterns
+    if (allRequires.includes('_status') || allRequires.includes('locked') ||
+        allRequires.includes('_notentered') || allRequires.includes('reentrancy')) {
+      modInfo.checksReentrancy = true;
+    }
+
+    // Check modifier name for hints
+    const modNameLower = modInfo.name.toLowerCase();
+    if (modNameLower.includes('onlyowner') || modNameLower.includes('onlyadmin')) {
+      modInfo.checksOwnership = true;
+      modInfo.checksAccess = true;
+    }
+    if (modNameLower.includes('nonreentrant') || modNameLower.includes('lock')) {
+      modInfo.checksReentrancy = true;
+    }
   }
 
   reset() {
-    this.contracts.clear();
-    this.functions.clear();
-    this.modifiers.clear();
-    this.stateVariables.clear();
-    this.callGraph.clear();
-    this.externalCalls.clear();
-    this.stateModifications.clear();
-    this.currentContract = null;
-    this.currentFunction = null;
+    this.contracts = new Map();
+    this.functions = new Map();
+    this.modifiers = new Map();
+    this.stateVariables = new Map();
   }
 
-  visit(node) {
-    if (!node) return;
-
-    const visitor = `visit${node.type}`;
-    if (this[visitor]) {
-      this[visitor](node);
-    }
-
-    // Traverse children
-    if (node.subNodes) {
-      node.subNodes.forEach(child => this.visit(child));
-    }
-    if (node.body) {
-      if (node.body.statements) {
-        node.body.statements.forEach(stmt => this.visit(stmt));
-      } else {
-        this.visit(node.body);
-      }
-    }
+  isStateVariable(node, currentContract) {
+    const varName = this.getVariableName(node);
+    return this.stateVariables.has(`${currentContract}.${varName}`);
   }
 
-  visitContractDefinition(node) {
-    this.currentContract = node.name;
-    const contractInfo = {
-      name: node.name,
-      kind: node.kind,
-      baseContracts: node.baseContracts || [],
-      stateVariables: [],
-      functions: [],
-      modifiers: []
-    };
-    this.contracts.set(node.name, contractInfo);
-  }
-
-  visitStateVariableDeclaration(node) {
-    if (!node.variables || !this.currentContract) return;
-
-    node.variables.forEach(variable => {
-      const varInfo = {
-        name: variable.name,
-        type: this.getTypeName(variable.typeName),
-        visibility: variable.visibility || 'internal',
-        isConstant: variable.isDeclaredConst,
-        isImmutable: variable.isImmutable,
-        contract: this.currentContract
-      };
-
-      this.stateVariables.set(`${this.currentContract}.${variable.name}`, varInfo);
-      this.contracts.get(this.currentContract).stateVariables.push(variable.name);
-    });
-  }
-
-  visitFunctionDefinition(node) {
-    if (!this.currentContract) return;
-
-    const funcName = node.name || (node.isConstructor ? 'constructor' : 'fallback');
-    const funcKey = `${this.currentContract}.${funcName}`;
-
-    const funcInfo = {
-      name: funcName,
-      contract: this.currentContract,
-      visibility: node.visibility || 'public',
-      stateMutability: node.stateMutability,
-      modifiers: (node.modifiers || []).map(m => m.name),
-      parameters: (node.parameters || []).map(p => ({
-        name: p.name,
-        type: this.getTypeName(p.typeName)
-      })),
-      isConstructor: node.isConstructor,
-      isFallback: !node.name && !node.isConstructor,
-      externalCalls: [],
-      stateWrites: [],
-      stateReads: [],
-      node: node
-    };
-
-    this.currentFunction = funcKey;
-    this.functions.set(funcKey, funcInfo);
-    this.contracts.get(this.currentContract).functions.push(funcName);
-
-    // Analyze function body
-    if (node.body) {
-      this.analyzeFunctionBody(node.body, funcInfo);
-    }
-
-    this.currentFunction = null;
-  }
-
-  visitModifierDefinition(node) {
-    if (!this.currentContract) return;
-
-    const modKey = `${this.currentContract}.${node.name}`;
-    const modInfo = {
-      name: node.name,
-      contract: this.currentContract,
-      parameters: (node.parameters || []).map(p => ({
-        name: p.name,
-        type: this.getTypeName(p.typeName)
-      })),
-      checksAccess: false,
-      checksOwnership: false,
-      checksRole: false,
-      requireStatements: [],
-      node: node
-    };
-
-    // Analyze modifier to determine what it checks
-    if (node.body) {
-      this.analyzeModifierBody(node.body, modInfo);
-    }
-
-    this.modifiers.set(modKey, modInfo);
-    this.contracts.get(this.currentContract).modifiers.push(node.name);
-  }
-
-  analyzeFunctionBody(body, funcInfo) {
-    if (!body || !body.statements) return;
-
-    body.statements.forEach(stmt => {
-      this.analyzeStatement(stmt, funcInfo);
-    });
-  }
-
-  analyzeStatement(stmt, funcInfo) {
-    if (!stmt) return;
-
-    // Detect external calls
-    if (this.isExternalCall(stmt)) {
-      const callInfo = this.extractCallInfo(stmt);
-      funcInfo.externalCalls.push(callInfo);
-    }
-
-    // Detect state writes
-    if (this.isStateWrite(stmt)) {
-      const writeInfo = this.extractWriteInfo(stmt);
-      funcInfo.stateWrites.push(writeInfo);
-    }
-
-    // Detect state reads
-    if (this.isStateRead(stmt)) {
-      const readInfo = this.extractReadInfo(stmt);
-      funcInfo.stateReads.push(readInfo);
-    }
-
-    // Recurse into nested statements
-    if (stmt.type === 'IfStatement') {
-      if (stmt.TrueBody) this.analyzeStatement(stmt.TrueBody, funcInfo);
-      if (stmt.FalseBody) this.analyzeStatement(stmt.FalseBody, funcInfo);
-    } else if (stmt.type === 'Block' && stmt.statements) {
-      stmt.statements.forEach(s => this.analyzeStatement(s, funcInfo));
-    } else if (stmt.type === 'WhileStatement' || stmt.type === 'ForStatement') {
-      if (stmt.body) this.analyzeStatement(stmt.body, funcInfo);
-    }
-  }
-
-  analyzeModifierBody(body, modInfo) {
-    if (!body || !body.statements) return;
-
-    body.statements.forEach(stmt => {
-      // Look for require statements
-      if (this.isRequireStatement(stmt)) {
-        const condition = this.extractRequireCondition(stmt);
-        modInfo.requireStatements.push(condition);
-
-        // Determine what type of check this is
-        if (this.checksOwnership(condition)) {
-          modInfo.checksOwnership = true;
-          modInfo.checksAccess = true;
-        } else if (this.checksRole(condition)) {
-          modInfo.checksRole = true;
-          modInfo.checksAccess = true;
-        } else if (this.isAccessCheck(condition)) {
-          modInfo.checksAccess = true;
-        }
-      }
-    });
-  }
-
-  isExternalCall(stmt) {
-    if (!stmt || !stmt.expression) return false;
-    const expr = stmt.expression;
-
-    // Check for low-level calls
-    if (expr.type === 'FunctionCall' && expr.expression) {
-      const memberName = this.getMemberName(expr.expression);
-      return ['call', 'delegatecall', 'staticcall', 'send', 'transfer'].includes(memberName);
-    }
-
-    return false;
-  }
-
-  isStateWrite(stmt) {
-    if (!stmt || !stmt.expression) return false;
-    const expr = stmt.expression;
-
-    if (expr.type === 'BinaryOperation' && expr.operator === '=') {
-      // Check if left side is a state variable
-      return this.isStateVariable(expr.left);
-    }
-
-    return false;
-  }
-
-  isStateRead(stmt) {
-    // This is simplified - in production would need full expression traversal
-    return false;
-  }
-
-  isStateVariable(node) {
-    if (!node) return false;
-
-    // Check if this is an identifier that matches a known state variable
-    if (node.type === 'Identifier') {
-      const varKey = `${this.currentContract}.${node.name}`;
-      return this.stateVariables.has(varKey);
-    }
-
-    // Check for indexed access or member access
-    if (node.type === 'IndexAccess' || node.type === 'MemberAccess') {
-      return this.isStateVariable(node.base || node.expression);
-    }
-
-    return false;
-  }
-
-  isRequireStatement(stmt) {
-    if (!stmt || !stmt.expression) return false;
-    const expr = stmt.expression;
-
-    if (expr.type === 'FunctionCall' && expr.expression) {
-      const funcName = expr.expression.name || '';
-      return funcName === 'require' || funcName === 'assert';
-    }
-
-    return false;
-  }
-
-  extractRequireCondition(stmt) {
-    if (!stmt || !stmt.expression || !stmt.expression.arguments) return '';
-
-    const args = stmt.expression.arguments;
-    if (args.length === 0) return '';
-
-    // Extract source code for the condition
-    const condition = args[0];
-    if (condition.loc) {
-      return this.getSourceSlice(condition.loc);
-    }
-
-    return '';
-  }
-
-  checksOwnership(condition) {
-    const lower = condition.toLowerCase();
-    return lower.includes('msg.sender') &&
-           (lower.includes('owner') || lower.includes('admin'));
-  }
-
-  checksRole(condition) {
-    const lower = condition.toLowerCase();
-    return lower.includes('role') || lower.includes('hasrole');
-  }
-
-  isAccessCheck(condition) {
-    return condition.includes('msg.sender');
-  }
-
-  extractCallInfo(stmt) {
-    return {
-      type: this.getMemberName(stmt.expression?.expression),
-      target: 'unknown', // Would need deeper analysis
-      loc: stmt.loc
-    };
-  }
-
-  extractWriteInfo(stmt) {
-    const left = stmt.expression.left;
-    return {
-      variable: left.name || 'unknown',
-      loc: stmt.loc
-    };
-  }
-
-  extractReadInfo(stmt) {
-    return { loc: stmt.loc };
-  }
-
-  getMemberName(node) {
-    if (!node) return '';
-    if (node.type === 'MemberAccess') return node.memberName;
+  getVariableName(node) {
     if (node.type === 'Identifier') return node.name;
-    return '';
+    if (node.type === 'MemberAccess') return node.memberName;
+    if (node.type === 'IndexAccess') return this.getVariableName(node.base);
+    return null;
   }
+
+  getSourceFromNode(node) {
+    if (!node || !node.range) return '';
+    return this.sourceCode.substring(node.range[0], node.range[1] + 1);
+  }
+
 
   getTypeName(typeNode) {
     if (!typeNode) return 'unknown';
@@ -347,77 +250,6 @@ class ControlFlowAnalyzer {
     if (typeNode.type === 'UserDefinedTypeName') return typeNode.namePath;
     if (typeNode.type === 'Mapping') return 'mapping';
     return 'complex';
-  }
-
-  buildCallGraph() {
-    // Build function call relationships
-    for (const [funcKey, funcInfo] of this.functions) {
-      this.callGraph.set(funcKey, []);
-
-      // Add internal function calls (would need to parse function bodies more deeply)
-      // This is a simplified version
-    }
-  }
-
-  analyzeDataFlow() {
-    // Perform data flow analysis to track tainted data
-    // This would require implementing a worklist algorithm
-    // Simplified for now
-  }
-
-  getSourceSlice(loc) {
-    if (!loc || !this.sourceCode) return '';
-
-    const lines = this.sourceCode.split('\n');
-    if (loc.start.line === loc.end.line) {
-      const line = lines[loc.start.line - 1] || '';
-      return line.substring(loc.start.column, loc.end.column);
-    }
-
-    // Multi-line - return first line for now
-    return lines[loc.start.line - 1] || '';
-  }
-
-  /**
-   * Check if a function can reach another function (transitive closure)
-   */
-  canReach(fromFunc, toFunc) {
-    const visited = new Set();
-    const queue = [fromFunc];
-
-    while (queue.length > 0) {
-      const current = queue.shift();
-      if (current === toFunc) return true;
-      if (visited.has(current)) continue;
-
-      visited.add(current);
-      const callees = this.callGraph.get(current) || [];
-      queue.push(...callees);
-    }
-
-    return false;
-  }
-
-  /**
-   * Get all functions that can be called from a given function
-   */
-  getReachableFunctions(funcKey) {
-    const reachable = new Set();
-    const visited = new Set();
-    const queue = [funcKey];
-
-    while (queue.length > 0) {
-      const current = queue.shift();
-      if (visited.has(current)) continue;
-
-      visited.add(current);
-      reachable.add(current);
-
-      const callees = this.callGraph.get(current) || [];
-      queue.push(...callees);
-    }
-
-    return Array.from(reachable);
   }
 }
 

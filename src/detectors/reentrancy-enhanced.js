@@ -24,6 +24,7 @@ class ReentrancyEnhancedDetector extends BaseDetector {
     this.dataFlow = dataFlow;
     this.sourceCode = sourceCode;
     this.fileName = fileName;
+    this.sourceLines = sourceCode.split('\n');
     this.findings = [];
 
     if (!cfg || !dataFlow) {
@@ -82,11 +83,14 @@ class ReentrancyEnhancedDetector extends BaseDetector {
           if (this.comesBefore(call.loc, write.loc)) {
             // Verify this is actually exploitable
             if (this.isExploitable(funcInfo, call, write)) {
+              // Adjust confidence based on call type
+              // transfer/send have 2300 gas stipend but aren't fully safe post-Istanbul
+              const isLimitedGas = call.type === 'transfer' || call.type === 'send';
               return {
                 call: call,
                 write: write,
-                severity: 'CRITICAL',
-                confidence: 'HIGH'
+                severity: isLimitedGas ? 'HIGH' : 'CRITICAL',
+                confidence: isLimitedGas ? 'MEDIUM' : 'HIGH'
               };
             }
           }
@@ -173,6 +177,7 @@ class ReentrancyEnhancedDetector extends BaseDetector {
 
   /**
    * Check if reentrancy is actually exploitable
+   * Returns object with exploitability details for severity adjustment
    */
   isExploitable(funcInfo, call, write) {
     // Check 1: Has reentrancy guard?
@@ -185,17 +190,21 @@ class ReentrancyEnhancedDetector extends BaseDetector {
       return false;
     }
 
-    // Check 3: Does external call allow reentrancy?
-    // (transfer/send have gas limits, call does not)
-    if (call.type === 'transfer' || call.type === 'send') {
-      // These limit gas, reducing reentrancy risk
-      return false;
-    }
-
-    // Check 4: Is the state write actually meaningful?
+    // Check 3: Is the state write actually meaningful?
     if (write.variable === '_status' || write.variable === 'locked') {
       // Likely a reentrancy guard implementation
       return false;
+    }
+
+    // Check 4: Does external call allow reentrancy?
+    // Note: Post-Istanbul (EIP-1884), transfer/send with 2300 gas stipend
+    // are less reliable due to increased SLOAD costs. While they provide
+    // some protection, they should not be considered fully safe.
+    // We still report these but with adjusted confidence.
+    if (call.type === 'transfer' || call.type === 'send') {
+      // Return true but caller should adjust confidence to MEDIUM
+      // These have gas limits but are not guaranteed safe post-Istanbul
+      return true;
     }
 
     return true;

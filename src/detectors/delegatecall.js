@@ -18,6 +18,23 @@ class DelegateCallDetector extends BaseDetector {
   }
 
   checkDelegatecall(node, code) {
+    const codeLower = code.toLowerCase();
+    
+    // Skip delegatecall in fallback/receive functions with assembly (standard proxy pattern)
+    if (codeLower.includes('fallback') || codeLower.includes('receive')) {
+      if (codeLower.includes('assembly') || codeLower.includes('calldatacopy')) {
+        // This is a standard proxy pattern - check if implementation is validated
+        const funcCode = this.getCodeSnippet(node.loc);
+        if (funcCode && (funcCode.includes('require') && funcCode.includes('implementation'))) {
+          return; // Secure proxy pattern
+        }
+        // Also check if it's in a function that validates implementation
+        if (this.hasWhitelistValidation(node)) {
+          return; // Has validation
+        }
+      }
+    }
+    
     // Check if delegatecall target is controlled by user input
     if (this.hasUserControlledTarget(node, code)) {
       // Check if there's whitelist validation in the function
@@ -59,12 +76,26 @@ class DelegateCallDetector extends BaseDetector {
     // Check if the function containing this delegatecall has whitelist validation
     // Look for patterns like: require(trustedAddresses[target], ...) or require(isApproved[target], ...)
     const lineNum = node.loc ? node.loc.start.line : 0;
+    const funcCode = this.getCodeSnippet(node.loc);
+
+    // Check the function code for whitelist patterns
+    const whitelistPatterns = [
+      /require\s*\(\s*[^)]*\b(trusted|approved|whitelist|allowed|authorized)\w*\[/i,
+      /require\s*\(\s*[^)]*\b(trusted|approved|whitelist|allowed|authorized)\w*\s*\(/i,
+      /mapping\s*\([^)]*\)\s*public\s*(trusted|approved|whitelist|allowed)/i,
+      /trustedImplementations\[/i,
+      /approvedImplementations\[/i
+    ];
+
+    if (whitelistPatterns.some(pattern => pattern.test(funcCode))) {
+      return true;
+    }
 
     // Check a few lines before the delegatecall for validation
-    for (let i = Math.max(1, lineNum - 5); i < lineNum; i++) {
+    for (let i = Math.max(1, lineNum - 10); i < lineNum; i++) {
       const line = this.getLineContent(i);
       // Look for whitelist patterns
-      if (line.match(/require\s*\([^)]*\b(trusted|approved|whitelist|allowed|authorized)/i)) {
+      if (whitelistPatterns.some(pattern => pattern.test(line))) {
         return true;
       }
     }
